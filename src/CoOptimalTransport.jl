@@ -1,17 +1,19 @@
 module CoOptimalTransport
 
 using LinearAlgebra
-using Distances
 
-unif(n::Int) = ones(n) ./ n
-flatten(x::AbstractArray) = reshape(x, filter(!=(1), size(x)))
+export coot
 
-function sinkhorn(μ, ν, C; λ = 1.0, n_iters = 20)
-    K = @. exp(-C / λ)
+include("./utils.jl")
+include("./PlanCache.jl")
 
-    u = ones(eltype(μ), size(μ))
+"Entropy regularized Optimal Transport"
+function sinkhorn(μ, ν, C; ϵ = 1.0, n_iters = 20)
+    K = @. exp(-C / ϵ)
+
+    u = ones_like(μ)
     v = similar(ν)
-    for _ in n_iters
+    for _ = 1:n_iters
         v = ν ./ (K' * u)
         u = μ ./ (K * v)
     end
@@ -19,49 +21,52 @@ function sinkhorn(μ, ν, C; λ = 1.0, n_iters = 20)
     Diagonal(u) * K * Diagonal(v)
 end
 
-X ⊗ π = flatten(sum(X .* π; dims = (1, 2)))
-
-"Pairwise distance on 1d variables"
-function L(X, X′; metric = euclidean)
-    d, n = size(X)
-    d′, n′ = size(X′)
-
-    M = pairwise(metric, reshape(X, 1, d * n), reshape(X′, 1, d′ * n′); dims = 2)
-    reshape(M, d, n, d′, n′)
-end
-Lˢ(X, X′) = permutedims(L(X, X′), (2, 4, 1, 3)) # (n, n′, d, d′)
-Lᵛ(X, X′) = permutedims(L(X, X′), (1, 3, 2, 4)) # (d, d′, n, n′)
-
 """
-Computes the two optimal transport plan πˢ and πᵛ of size (n, n′) and (d, d′) respectively.
+    coot(X, X′, [w, w′, v, v′]; [n_iters = 20, tol = 1e-7, metric = CoOptimalTransport.L², otplan_kwargs = Dict{Symbol,Any}(), otplan = CoOptimalTransport.sinkhorn])
+
+Computes the two optimal transport plan πᵛ and πˢ of size (d, d′) and (n, n′) respectively.
 
 ```julia
-X = rand(5, 10)
-X′ = rand(10, 23)
-πᵛ, πˢ = coplan(X, X′; n_iters = 100)
+X = rand(5, 10);
+X′ = rand(10, 23);
+πᵛ, πˢ = coot(X, X′; n_iters = 100, otplan_kwargs = (; ϵ = 0.01, n_iters = 30));
 ```
 """
-function coplan(
-    X::M,
-    X′::M,
-    w = unif(size(X, 2)),
-    w′ = unif(size(X′, 2)),
-    v = unif(size(X, 1)),
-    v′ = unif(size(X′, 1));
+function coot(
+    X,
+    X′,
+    w = unif_like(X, size(X, 2)),
+    w′ = unif_like(X′, size(X′, 2)),
+    v = unif_like(X, size(X, 1)),
+    v′ = unif_like(X′, size(X′, 1));
     n_iters = 20,
-    tol = 0.05
-) where {M<:AbstractMatrix}
+    tol = 1e-7,
+    metric = L²,
+    otplan_kwargs = Dict{Symbol,Any}(),
+    otplan = (args...) -> sinkhorn(args...; otplan_kwargs...),
+)
     πˢ = w * w′'
     πᵛ = v * v′'
 
+    LXX′ˢ = metric(X, X′, w, w′)
+    LXX′ᵛ = metric(X', X′', v, v′)
+    cost = Inf
     for _ = 1:n_iters
-        new_πᵛ = sinkhorn(v, v′, Lˢ(X, X′) ⊗ πˢ; λ = 1.0, n_iters = 20)
-        πˢ = sinkhorn(w, w′, Lᵛ(X, X′) ⊗ πᵛ; λ = 1.0, n_iters = 20)
+        Mᵛ = LXX′ˢ ⊗ πˢ
+        new_πᵛ = otplan(v, v′, Mᵛ)
+        Mˢ = LXX′ᵛ ⊗ new_πᵛ
+        new_πˢ = otplan(w, w′, Mˢ)
 
-        err = sum(@. (new_πᵛ - πᵛ)^2)
+        newcost = sum(@. (πᵛ * Mᵛ))
+        Δ = sum(@. (πᵛ - new_πᵛ)^2) + sum(@. (πˢ - new_πˢ)^2)
         πᵛ = new_πᵛ
+        πˢ = new_πˢ
 
-        err < tol && break
+        if Δ < 1e-16 || abs(cost - newcost) < tol
+            break
+        end
+
+        cost = newcost
     end
 
     πᵛ, πˢ
