@@ -62,4 +62,4 @@ using CoOptimalTransport, OptimalTransport, GLPK
 
 ## References
 
-> [1]I. Redko, T. Vayer, R. Flamary, and N. Courty, “CO-Optimal Transport,” arXiv:2002.03731 [cs, stat], Nov. 2020, Accessed: Dec. 03, 2021. [Online]. Available: http://arxiv.org/abs/2002.03731
+> [1]Titouan, Vayer, Ievgen Redko, Rémi Flamary, and Nicolas Courty. "Co-optimal transport." Advances in Neural Information Processing Systems 33 (2020): 17559-17570.
